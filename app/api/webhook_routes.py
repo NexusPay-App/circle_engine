@@ -100,6 +100,131 @@ async def get_webhook_config_endpoint():
         logger.error(f"Error getting webhook config: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/wallets/role/{role}")
+async def get_wallet_by_role_endpoint(role: str):
+    """
+    Get wallet details by role (e.g backendMirror, circleEngine, solanaOperations)
+    via the webhook management API.
+    """
+    try:
+        wallet = await get_wallet_by_role(role)
+        if wallet:
+            return {
+                "wallet": {
+                    "id": wallet.id,
+                    "address": wallet.address,
+                    "blockchain": wallet.blockchain,
+                    "account_type": wallet.account_type,
+                    "role": wallet.role,
+                    "wallet_type": wallet.wallet_type,
+                    "state": wallet.state
+                }
+            }
+        raise HTTPException(status_code=404, detail=f"Wallet with role '{role}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting wallet by role via  webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/wallets/type/{wallet_type}")
+async def get_wallet_by_type(wallet_type: str):
+    """
+    Get all wallets by type (EVM, SOLANA) via the webhook management API.
+    """
+    try:
+        wallets = get_wallets_by_type(wallet_type)
+        return {
+            "wallets": [
+                {
+                    "id": wallet.id,
+                    "address": wallet.address,
+                    "blockchain": wallet.blockchain,
+                    "account_type": wallet.account_type,
+                    "role": wallet.role,
+                    "wallet_type": wallet.wallet_type,
+                    "state": wallet.state
+                }
+                for wallet in wallets
+            ],
+            "total": len(wallets),
+            "wallet_type": wallet_type
+
+        }
+    except Exception as e:
+        logger.error(f"Error getting wallets by type via webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("transactions/blockchain/{blockchain}")
+async def get_transactions_by_blockchain(blockchain: str, limit: int = 100):
+    """
+    Get transactions by blockchain via the webhook management API.
+    """
+    try:
+        transactions = get_transactions_by_blockchain(blockchain, limit)
+        return {
+            "transactions": [
+                {
+                    "id": tx.id,
+                    "wallet_id": tx.wallet_id,
+                    "token_id": tx.token_id,
+                    "destination_address": tx.destination_address,
+                    "amount": tx.amount,
+                    "status": tx.status,
+                    "blockchain": tx.blockchain,
+                    "tx_hash": tx.tx_hash,
+                    "confirmations": tx.confirmations,
+                    "confirmation_required": tx.confirmation_required,
+                    "created_at": tx.created_at.isoformat() if tx.created_at else None,
+                }
+                for tx in transactions
+            ],
+            "total": len(transactions),
+            "blockchain": blockchain
+        }
+    except Exception as e:
+        logger.error(f"Error getting transactions by blockchain via webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("wallets/{wallet_id}/multi-chain-balance")
+async def get_multi_chain_balance(wallet_id: str):
+    """
+    Get aggregated balance across all blockchains for a specific wallet via
+    the webhook management API.
+    """
+    try:
+        balance_data = await get_multi_chain_balance(wallet_id)
+        if balance_data:
+            return balance_data
+        raise HTTPException(status_code=404, detail=f"Balance data not found for wallet ID: {wallet_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting multi-chain balance via webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.get("/aggregated-balances")
+async def get_aggregated_balance(
+    role: Optional[str] = None,
+    wallet_type: Optional[str] = None
+):
+    """
+    Get aggregated balance across multiple wallets, optionally filtered by role or wallet type,
+    via the webhook management API.
+    """
+    try:
+        aggregated_data = await get_aggregated_balance(role=role, wallet_type=wallet_type)
+        if aggregated_data:
+            return aggregated_data
+        raise HTTPException(status_code=404, detail="No aggregated balance data found.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting aggregated balance via webhook  API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 @router.get("/gas-station/status")
 async def get_gas_station_status_endpoint(blockchain: Optional[str] = None):
     """
@@ -124,6 +249,24 @@ async def get_gas_station_health_endpoint():
         logger.error(f"Error getting gas station health: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/gas-station/estimate-fees")
+async def estimate_gas_fees(
+    blockchain: str,
+    transaction_type: str = "transfer",
+    gas_level: str = "MEDIUM"
+):
+    """
+    Estimate gas fees for a specific blockchain and transaction type
+    via the webhook management API.
+    """
+    try:
+        estimate = await estimate_gas_fees(blockchain, transaction_type, gas_level)
+        return estimate
+    except Exception as e:
+        logger.error(f"Error estimating gas fees via webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @router.get("/ecosystem/balance")
 async def get_ecosystem_balance_endpoint():
     """
@@ -280,3 +423,32 @@ async def get_webhook_signatures(limit: int = 100, verification_status: Optional
     except Exception as e:
         logger.error(f"Error getting webhook signatures: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 
+
+
+class SponsorTransactionRequest(BaseModel):
+    transaction_id: str
+    wallet_id: str
+    blockchain: str
+    gas_level: str = "MEDIUM"
+
+@router.post("/gas-station/sponsor-transaction")
+async def api_sponsor_transaction_endpoint(request_body: SponsorTransactionRequest):
+    """
+    Manually sponsor a transaction using Circle Gas Station
+    via the webhook management API.
+    (USE WITH EXTREME CAUTION - REQUIRES STRONG AUTHENTICATION)
+    """
+    try:
+        # Implement robust authentication and authorization here
+        # For example, check if the user making this API call has admin privileges
+
+        result = await sponsor_transaction(
+            request_body.transaction_id,
+            request_body.wallet_id,
+            request_body.blockchain,
+            request_body.gas_level
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error sponsoring transaction via webhook API: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

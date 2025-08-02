@@ -20,8 +20,7 @@ async def setup_circle_webhook():
                 "authorization": f"Bearer {api_key}",
                 "content-type": "application/json"
             },
-            json={
-                "url": webhook_url,
+                 "url": webhook_url,
                 "events": [
                     "transactions.inbound",
                     "transactions.outbound", 

@@ -25,8 +25,8 @@ def save_wallet_set(wallet_set_id, name, custody_type):
     finally:
         db.close()
 
-def save_wallet(wallet_id, address, blockchain, account_type, state, custody_type, wallet_set_id, role=None, wallet_type=None):
-    """Save wallet to database with role and type tracking"""
+def save_wallet(wallet_id, address, blockchain, account_type, state, custody_type, wallet_set_id, role=None, wallet_type=None, ref_id=None):
+    """Save wallet to database with role, type, and ref_id tracking"""
     db = SessionLocal()
     try:
         w = Wallet(
@@ -38,7 +38,8 @@ def save_wallet(wallet_id, address, blockchain, account_type, state, custody_typ
             custody_type=custody_type, 
             wallet_set_id=wallet_set_id,
             role=role,
-            wallet_type=wallet_type
+            wallet_type=wallet_type,
+            ref_id=ref_id
         )
         db.add(w)
         db.commit()
@@ -48,7 +49,8 @@ def save_wallet(wallet_id, address, blockchain, account_type, state, custody_typ
             "blockchain": blockchain,
             "account_type": account_type,
             "role": role,
-            "wallet_type": wallet_type
+            "wallet_type": wallet_type,
+            "ref_id": ref_id
         })
     except Exception as e:
         db.rollback()
@@ -191,3 +193,28 @@ def get_wallet_ecosystem_status():
         return None
     finally:
         db.close() 
+
+
+def update_wallet_ref_id(wallet_id: str, ref_id: str):
+    """
+    Update the ref_id for a wallet in the database.
+    """
+    db = SessionLocal()
+    try:
+        wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
+        if wallet:
+            wallet.ref_id = ref_id
+            db.commit()
+            log_audit("wallet_ref_id_updated", {
+                "wallet_id": wallet_id,
+                "ref_id": ref_id
+            })
+            return True
+        return False
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating wallet ref_id: {str(e)}")
+        return False
+    finally:
+        db.close()
+    

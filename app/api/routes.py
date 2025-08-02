@@ -171,7 +171,8 @@ def api_get_wallet_by_role(role: str):
                     "account_type": wallet.account_type,
                     "role": wallet.role,
                     "wallet_type": wallet.wallet_type,
-                    "state": wallet.state
+                    "state": wallet.state,
+                    "ref_id": wallet.ref_id,
                 }
             }
         else:
@@ -191,11 +192,12 @@ def api_get_wallets_by_type(wallet_type: str):
                 {
                     "id": wallet.id,
                     "address": wallet.address,
-                    "blockchain": wallet.blockchain,
-                    "account_type": wallet.account_type,
+                        "blockchain": wallet.blockchain,
+                        "account_type": wallet.account_type,
                     "role": wallet.role,
                     "wallet_type": wallet.wallet_type,
-                    "state": wallet.state
+                    "state": wallet.state,
+                    "ref_id": wallet.ref_id
                 }
                 for wallet in wallets
             ],

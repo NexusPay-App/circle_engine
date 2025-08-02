@@ -25,6 +25,7 @@ class Wallet(Base):
     wallet_set_id = Column(String, ForeignKey("wallet_sets.id"))
     role = Column(String, nullable=True)  # backendMirror, circleEngine, solanaOperations
     wallet_type = Column(String, nullable=True)  # EVM, SOLANA
+    ref_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Indexes for efficient querying
@@ -33,6 +34,7 @@ class Wallet(Base):
         Index('idx_wallet_blockchain', 'blockchain'),
         Index('idx_wallet_role', 'role'),
         Index('idx_wallet_type', 'wallet_type'),
+        Index('idx_wallet_ref_id', 'ref_id'),
     )
 
 class Transaction(Base):

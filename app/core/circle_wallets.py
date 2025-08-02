@@ -287,3 +287,22 @@ def get_transaction_confirmation_status(tx_id: str, blockchain: str):
         "is_final": tx.status == "COMPLETED",
         "tx_hash": getattr(tx, 'txHash', None)
     }
+
+
+def set_system_wallet_refid(wallet_id, role):
+    ref_id_map = {
+        "backendMirror": "system-backendMirror",
+        "circleEngine": "system-circleEngine",
+        "solanaOperations": "system-solanaEOA"
+    }
+    ref_id = ref_id_map[role]
+    client = get_circle_client()
+    api_instance = developer_controlled_wallets.WalletsApi(client)
+    update_request = developer_controlled_wallets.UpdateWalletRequest.from_dict({
+        "name": f"{role} System Wallet",
+        "refId": ref_id
+    })
+    api_instance.update_wallet(wallet_id, update_request)
+    # Update local db
+    from app.core.business.wallet_business import update_wallet_ref_id
+    update_wallet_ref_id(wallet_id, ref_id)
