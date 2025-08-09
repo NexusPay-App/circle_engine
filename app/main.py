@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from app.api.routes import router as api_router
 from app.api.webhook_routes import router as webhook_router
+from app.api.webhook_log_routes import router as webhook_log_router
+
 from app.services.webhook_service import schedule_webhook_retries, monitor_webhook_health
 import asyncio
 import logging
@@ -18,6 +20,7 @@ app = FastAPI(
 # Include routers
 app.include_router(api_router, prefix="/api")
 app.include_router(webhook_router, prefix="/api")
+app.include_router(webhook_log_router, prefix="/api")
 
 @app.on_event("startup")
 async def startup_event():

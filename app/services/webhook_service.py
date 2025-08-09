@@ -6,7 +6,9 @@ import asyncio
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, Request
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives import hashes, hmac, serialization
+from cryptography.hazmat.primitives.asymmetric import 
+
 from app.core.business.webhook_business import (
     process_webhook_notification, save_webhook_attempt, 
     verify_webhook_signature, retry_failed_webhooks
@@ -17,6 +19,10 @@ from app.core.business.gas_station_business import estimate_gas_fees, sponsor_tr
 from app.core.business.balance_business import get_multi_chain_balance, get_aggregated_balance
 from app.utils.config import get_webhook_config
 from app.utils.audit import log_audit
+from app.models.webhook_log import WebhookLog
+from app.db.session import SessionLocal
+
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,8 @@ class WebhookService:
         self.retry_delay = self.config.get("retry_delay_seconds", 60)
         self.allowed_ips = self.config.get("allowed_ips", [])
         self.backendmirror_url = self.config.get("backendmirror_url")
+        self.subscribed_events = self.config.get("subscribed_events", [])
+        self.webhook_logs_enabled = self.config.get("webhook_logs_enabled", False)
     
     async def process_webhook(self, request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming webhook request"""
@@ -38,12 +46,28 @@ class WebhookService:
             signature = request.headers.get("Circle-Signature")
             timestamp = request.headers.get("Circle-Timestamp")
             notification_id = payload.get("notificationId")
+            event_type = payload.get("notificationType")
+            status = "unknown"
+            error_message = None
             
             # Validate IP address
             client_ip = self._get_client_ip(request)
             if not self._is_ip_allowed(client_ip):
                 logger.warning(f"Webhook from unauthorized IP: {client_ip}")
+                status = "rejected"
                 raise HTTPException(status_code=403, detail="Unauthorized IP address")
+
+            # Event Filtering
+            if self.subscribed_events and event_type not in self.subscribed_events:
+                logger.info(f"Ignoring unsubscribed event type: {event_type}")
+                status = "ignored"
+                return {"status": "ignored", "mesage": f"Event {event_type} not subscribed"}
+
+            # Async processing: respond quickly, process in background
+            asyncio.create_task(self._process_event(payload, event_type, notification_id))
+            status "accepted"
+            return {"status": "accepted", "message": "Webhook accepted for processing"}
+            
             
             # Process webhook notification
             result = await process_webhook_notification(payload, signature, timestamp)
@@ -57,13 +81,43 @@ class WebhookService:
                 
         except Exception as e:
             logger.error(f"Error processing webhook: {str(e)}")
+            error_message = str(e)
             await save_webhook_attempt(
                 payload.get("notificationId", "unknown"),
                 "failed",
                 str(e),
+                error_message,
                 payload
             )
             raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            if self.webhook_logs_enabled:
+                self._log_webhook(notification_id, event_type, payload, error_message)
+
+    async def _process_event(self, payload, event_type, notification_id):
+        status = "processed"
+        error_message = None
+        try:
+            result = await process_webhook_notification(payload)
+            if result.get("status") === "success":
+                logger.info(f"Successfully processed webhook: {notification_id}")
+            else:
+                logger.error(f"Failed to process webhook: {notification_id} - {result.get('message')}")
+                status = "failed"
+                error_message = result.get("message")
+        except Exception as e:
+            logger.error(f"Error in background event processing: {str(e)}")
+            status = "failed"
+            error_message = str(e)
+            await save_webhook_attempt(
+                notification_id or "unknown",
+                "failed",
+                error_message,
+                payload
+            )
+        finally:
+            if self.webhook_logs_enabled:
+                self._log_webhook(notification_id, event_type, payload, status, error_message, processed=True)
     
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address"""
@@ -120,6 +174,7 @@ class WebhookService:
             logger.error(f"Error retrying failed webhooks: {str(e)}")
             return {"status": "error", "message": str(e)}
     
+    
     async def get_webhook_health(self) -> Dict[str, Any]:
         """Get webhook service health status"""
         try:
@@ -153,6 +208,21 @@ class WebhookService:
         except Exception as e:
             logger.error(f"Error checking webhook health: {str(e)}")
             return {"status": "unhealthy", "error": str(e)}
+    
+    def _log_webhook(self, notification_id, event_type, payload, status, error_message, processed=False):
+        try:
+            db = SessionLocal()
+            log = WebhookLog(
+                notification_id=notification_id,
+                event=event_type,
+                processed_at=datetime.utcnow() if processed else None  
+            )
+            db.add(log)
+            db.commit()
+        except Exception as e:
+            logger.error(f"Error logging webhook event: {str(e)}")
+        finally:
+            db.close()
 
 # Global webhook service instance
 webhook_service = WebhookService()

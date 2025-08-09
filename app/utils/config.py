@@ -88,7 +88,15 @@ def get_webhook_config():
             "100.24.191.35", 
             "54.165.52.248",
             "54.87.106.46"
-        ]
+        ],
+        "subscribed_events": [
+            "transactions.inbound",
+            "transactions.outbound",
+            "mint.completed",
+            "redeem.completed",
+            "webhooks.test"
+        ],
+        "webhook_logs_enabled": True
     }
 
 def get_blockchain_config():
