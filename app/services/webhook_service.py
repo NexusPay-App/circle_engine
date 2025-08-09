@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException, Request
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, hmac, serialization
-from cryptography.hazmat.primitives.asymmetric import 
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.core.business.webhook_business import (
     process_webhook_notification, save_webhook_attempt, 
@@ -42,9 +42,10 @@ class WebhookService:
     async def process_webhook(self, request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming webhook request"""
         try:
-            # Extract headers
-            signature = request.headers.get("Circle-Signature")
-            timestamp = request.headers.get("Circle-Timestamp")
+            # Extract headers (normalize to support both X-* and legacy header names)
+            signature = request.headers.get("X-Circle-Signature") or request.headers.get("Circle-Signature")
+            timestamp = request.headers.get("X-Circle-Timestamp") or request.headers.get("Circle-Timestamp")
+            key_id = request.headers.get("X-Circle-Key-Id")  # present for Programmable Wallets webhooks
             notification_id = payload.get("notificationId")
             event_type = payload.get("notificationType")
             status = "unknown"
@@ -63,13 +64,14 @@ class WebhookService:
                 status = "ignored"
                 return {"status": "ignored", "mesage": f"Event {event_type} not subscribed"}
 
-            # Async processing: respond quickly, process in background
-            asyncio.create_task(self._process_event(payload, event_type, notification_id))
-            status "accepted"
-            return {"status": "accepted", "message": "Webhook accepted for processing"}
-            
-            
-            # Process webhook notification
+            # Inject keyId into payload so business layer can prefer ECDSA verification when present
+            if key_id:
+                try:
+                    payload["keyId"] = key_id
+                except Exception:
+                    pass
+
+            # Process webhook notification (keeps existing behavior)
             result = await process_webhook_notification(payload, signature, timestamp)
             
             if result.get("status") == "success":
@@ -92,14 +94,15 @@ class WebhookService:
             raise HTTPException(status_code=500, detail=str(e))
         finally:
             if self.webhook_logs_enabled:
-                self._log_webhook(notification_id, event_type, payload, error_message)
+                # status may be updated above; include basic fields
+                self._log_webhook(notification_id, event_type, payload, status, error_message)
 
     async def _process_event(self, payload, event_type, notification_id):
         status = "processed"
         error_message = None
         try:
             result = await process_webhook_notification(payload)
-            if result.get("status") === "success":
+            if result.get("status") == "success":
                 logger.info(f"Successfully processed webhook: {notification_id}")
             else:
                 logger.error(f"Failed to process webhook: {notification_id} - {result.get('message')}")

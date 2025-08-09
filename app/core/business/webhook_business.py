@@ -10,6 +10,9 @@ import json
 import base64
 import hmac
 import hashlib
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.exceptions import InvalidSignature
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,41 @@ def verify_webhook_signature(payload: str, signature: str, timestamp: str, webho
         logger.error(f"Error verifying webhook signature: {str(e)}")
         return False
 
+async def verify_webhook_signature_ecdsa(notification_data: dict, signature_b64: str, key_id: str) -> bool:
+    """Verify Circle Programmable Wallets webhook using ECDSA and Circle public key service.
+
+    This follows Circle docs: fetch public key via key_id, canonicalize JSON with separators (',', ':'),
+    and verify ECDSA-SHA256 signature.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                f"https://api.circle.com/v2/notifications/publicKey/{key_id}",
+                headers={"accept": "application/json"}
+            )
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            public_key_b64 = data["publicKey"]
+            algorithm = data.get("algorithm", "")
+
+        if algorithm != "ECDSA_SHA_256":
+            logger.error(f"Unsupported signature algorithm: {algorithm}")
+            return False
+
+        public_key_bytes = base64.b64decode(public_key_b64)
+        public_key = serialization.load_der_public_key(public_key_bytes)
+
+        message = json.dumps(notification_data, separators=(',', ':')).encode()
+        signature_bytes = base64.b64decode(signature_b64)
+
+        public_key.verify(signature_bytes, message, ec.ECDSA(hashes.SHA256()))
+        return True
+    except InvalidSignature:
+        return False
+    except Exception as e:
+        logger.error(f"ECDSA verification error: {str(e)}")
+        return False
+
 async def save_webhook_signature(notification_id: str, signature: str, timestamp: str, verification_status: str):
     """Save webhook signature for audit trail"""
     db = SessionLocal()
@@ -121,19 +159,29 @@ async def process_webhook_notification(notification_data: dict, signature: str =
         version = notification_data.get("version", 1)
         
         # Verify signature if provided
-        if signature and timestamp:
-            webhook_config = get_webhook_config()
-            webhook_secret = webhook_config.get("webhook_secret")
-            if webhook_secret:
-                payload = json.dumps(notification_data, separators=(',', ':'))
-                is_valid = verify_webhook_signature(payload, signature, timestamp, webhook_secret)
+        # Prefer ECDSA verification (Programmable Wallets) when key id header is present.
+        # For backward compatibility (Payments webhooks), fall back to HMAC verification
+        # using webhook_secret and timestamp.
+        key_id = notification_data.get("keyId")  # may be injected by caller/service layer
+        if signature:
+            if key_id:
+                is_valid = await verify_webhook_signature_ecdsa(notification_data, signature, key_id)
                 verification_status = "verified" if is_valid else "failed"
-                
-                await save_webhook_signature(notification_id, signature, timestamp, verification_status)
-                
+                await save_webhook_signature(notification_id, signature, timestamp or "", verification_status)
                 if not is_valid:
-                    logger.warning(f"Invalid webhook signature for notification: {notification_id}")
+                    logger.warning(f"Invalid ECDSA signature for notification: {notification_id}")
                     return {"status": "error", "message": "Invalid signature"}
+            elif timestamp:
+                webhook_config = get_webhook_config()
+                webhook_secret = webhook_config.get("webhook_secret")
+                if webhook_secret:
+                    payload = json.dumps(notification_data, separators=(',', ':'))
+                    is_valid = verify_webhook_signature(payload, signature, timestamp, webhook_secret)
+                    verification_status = "verified" if is_valid else "failed"
+                    await save_webhook_signature(notification_id, signature, timestamp, verification_status)
+                    if not is_valid:
+                        logger.warning(f"Invalid HMAC signature for notification: {notification_id}")
+                        return {"status": "error", "message": "Invalid signature"}
         
         # Save webhook event
         await save_webhook_event(
